@@ -1,122 +1,133 @@
 # Job Scout
 
-Daily email digest of new job openings at companies you care about. Two-stage filtering: broad keyword pre-filter, then Claude reads actual job descriptions and evaluates fit against your natural-language role description.
+An AI-powered job alert system that tracks companies you care about and emails
+you when relevant new positions appear — filtered by your location, role
+preferences, and an AI that actually reads each job description.
 
-```
-Anthropic (377 jobs) → location filter → 63 → keyword filter → 45 → LLM filter → 3 relevant → email
-```
+**Philosophy:** Don't waste time scrolling career pages. Let AI read hundreds of
+job descriptions and surface only the ones that match what you're looking for.
 
-## How it works
+## What You Get
 
-1. **Fetch** — pulls live job listings from Greenhouse and Lever public APIs
-2. **Location filter** — keeps only jobs matching your city/remote preferences
-3. **Keyword filter** — drops obvious non-tech roles cheaply (sales, marketing, etc.)
-4. **LLM filter** — Claude reads each job description and compares it to your `targetRole` description, returning a relevance decision + one-sentence reason
-5. **Digest** — formats matched jobs into a clean email grouped by company
-6. **Deliver** — sends via [Resend](https://resend.com) on your configured schedule
+A daily email digest with:
 
-Only *new* jobs are evaluated — already-seen IDs are tracked in `~/.job-scout/seen-jobs.json`. First run baselines silently; emails start from run two.
+- New job openings from your tracked companies, filtered to your role and location
+- AI-evaluated relevance — Claude reads each job description and decides if it fits your background
+- Direct apply links for every matched position
+- Reminder links for companies without API access (TikTok, Meta, etc.)
 
-## Setup
+## Quick Start
 
-This skill is designed to be set up through Claude Code. Open Claude Code and say:
+1. Install the skill in Claude Code
+2. Say **"Set up job scout for me"**
+3. The agent walks you through setup conversationally — no config files to edit
 
-> "Set up job scout for me"
+The agent will ask you:
+- Which companies you want to track
+- What kind of role you're looking for (and what you're not interested in)
+- Which locations or remote
+- Where to send the digest (email address)
+- How often and what time
 
-Claude Code will walk you through configuring companies, your target role, locations, delivery email, and schedule — then register the Windows Task Scheduler entry and run a silent baseline pass.
+Your first digest arrives the next day. The initial run silently indexes existing
+jobs so you only get notified about genuinely new openings.
 
 ### Prerequisites
 
-Before running setup, add your API keys to `~/.job-scout/.env`:
+You'll need two API keys in `~/.job-scout/.env`:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 RESEND_API_KEY=re_...
 ```
 
-- **Anthropic key** — [console.anthropic.com](https://console.anthropic.com/) (used for LLM filtering + digest formatting)
-- **Resend key** — [resend.com](https://resend.com/) (used for email delivery)
+- **Anthropic** — [console.anthropic.com](https://console.anthropic.com/) (AI reads job descriptions)
+- **Resend** — [resend.com](https://resend.com/) (sends the email digest, free tier available)
 
-### Manual setup (without Claude Code)
+## Changing Settings
 
+Your preferences are configurable through conversation. Just tell your agent:
+
+- **"Add Stripe to my job scout list"** — finds the right job board API and adds it
+- **"Remove Cohere from job scout"** — removes a company
+- **"Change my target role to senior backend engineer"** — updates what the AI looks for
+- **"Add Berlin to my locations"** — expands your location filter
+- **"Switch to weekdays only at 8am"** — changes the schedule
+- **"Pause job scout"** / **"Resume job scout"** — temporarily stop/start scanning
+- **"Send me a test email"** — verifies delivery is working
+- **"Show me my current job scout config"** — displays your settings
+
+Or edit `~/.job-scout/config.json` directly if you prefer.
+
+## Customizing the Digest
+
+The skill uses a plain-English prompt file to control how the digest is formatted.
+You can customize it two ways:
+
+**Through conversation (recommended):**
+Tell your agent what you want — "Make the digest shorter," "Add a section for
+internships," "Group jobs by department instead of company."
+
+**Direct editing (power users):**
+Edit the file in the `prompts/` folder:
+- `format-jobs.md` — how the digest is structured, what to include, tone
+
+This is a plain English instruction, not code. Changes take effect on the next digest.
+
+## Supported Company Types
+
+| Type | How it works | Example companies |
+|------|-------------|-------------------|
+| **Greenhouse** | Auto-fetches from public API | Anthropic, Stripe, Notion |
+| **Lever** | Auto-fetches from public API | Mistral AI, Figma |
+| **Ashby** | Auto-fetches from public API | Ramp, Linear, Labelbox |
+| **Manual** | Reminder link in your digest | TikTok, Meta, Spotify, DeepMind |
+
+When you add a company, the agent automatically detects which type to use.
+Companies without a public job API are added as manual links so you don't forget
+to check them.
+
+## Installation
+
+### Claude Code
 ```bash
-cd scripts
-npm install
+git clone <repo-url> ~/.claude/skills/job-scout
+cd ~/.claude/skills/job-scout/scripts && npm install
 ```
 
-Copy `config/default-config.json` to `~/.job-scout/config.json` and edit it, then:
+## Requirements
 
-```bash
-node setup-task.js          # register Task Scheduler entry
-node prepare-jobs.js        # baseline pass (no email sent)
-```
+- Claude Code (or similar AI agent)
+- Internet connection (to fetch job listings from public APIs)
+- Anthropic API key (for AI-powered job relevance filtering)
+- Resend API key (for email delivery — free tier available)
 
-## Configuration
-
-All config lives in `~/.job-scout/config.json`. Ask Claude Code to change anything, or edit directly.
-
-### Companies
-
-Each entry specifies a company and how to fetch its jobs:
-
-| ATS type | Description | Required fields |
-|---|---|---|
-| `greenhouse` | Greenhouse Boards public API | `slug` |
-| `lever` | Lever public postings API | `slug` |
-| `manual` | No API — digest shows a reminder link | `careers_url` |
-
-Finding slugs: Greenhouse → `boards.greenhouse.io/{slug}`, Lever → `jobs.lever.co/{slug}`
-
-### Target role
-
-`targetRole` is read by the LLM when evaluating each job description. Write it as a plain English description of what you want and don't want:
+## How It Works
 
 ```
-"Senior software engineer or ML engineer roles focused on model training infrastructure,
-distributed systems, compilers, or AI tooling. Not interested in sales, marketing,
-product management, design, legal, finance, or HR."
+377 jobs at Anthropic
+  → 63 match your location (London, Remote)
+  → 45 pass keyword filter (engineering roles only)
+  → 3 confirmed relevant by AI → emailed to you
 ```
 
-### Schedule
+1. **Fetch** — pulls live listings from company job boards (Greenhouse, Lever, Ashby APIs)
+2. **Filter** — drops jobs outside your locations and non-technical roles
+3. **AI review** — Claude reads each remaining job description against your role preferences
+4. **Digest** — formats matches into a clean, scannable email
+5. **Deliver** — sends via Resend on your schedule
 
-```json
-"schedule": {
-  "time": "09:05",
-  "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]
-}
-```
+Only new jobs trigger an email — you won't see the same listing twice.
 
-All 7 days → daily trigger. Any subset → weekly trigger. After changing, run `node scripts/setup-task.js` or ask Claude Code to apply it.
+See [examples/sample-digest.md](examples/sample-digest.md) for what the output looks like.
 
-## Platform support
+## Privacy
 
-| | Windows | macOS |
-|---|---|---|
-| Fetch / filter / deliver | ✓ | ✓ |
-| Scheduled task setup | ✓ (Task Scheduler, automated) | Partial — use `run-jobs.sh` + manual launchd setup (see SKILL.md) |
+- Job listings are fetched directly from public company APIs — no middleman
+- Your config and seen-jobs history stay on your machine (`~/.job-scout/`)
+- The Anthropic API key is used only to evaluate job relevance locally
+- The Resend API key is used only to send emails to your own address
 
-## Pipeline
+## License
 
-```
-prepare-jobs.js → generate-digest.js → deliver.js
-```
-
-Each script is a stdin→stdout filter. Run manually:
-
-```bash
-cd scripts
-node prepare-jobs.js | node generate-digest.js | node deliver.js
-```
-
-## File locations
-
-| Path | Purpose |
-|---|---|
-| `~/.job-scout/config.json` | Your config |
-| `~/.job-scout/.env` | API keys |
-| `~/.job-scout/seen-jobs.json` | Seen job IDs — delete to reset |
-| `~/.job-scout/job-scout.log` | Run logs |
-
-## Resetting
-
-Delete `~/.job-scout/seen-jobs.json`. Next run re-baselines; the run after that sends only new jobs.
+MIT

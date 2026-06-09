@@ -14,7 +14,13 @@
       "slug": "mistral"
     },
     {
-      "_comment": "For companies not on Greenhouse/Lever, use 'manual' — a reminder link appears in the digest",
+      "_comment": "Ashby ATS — find the slug in the board URL: jobs.ashbyhq.com/{slug}",
+      "name": "Ramp",
+      "ats": "ashby",
+      "slug": "ramp"
+    },
+    {
+      "_comment": "For companies not on Greenhouse/Lever/Ashby, use 'manual' — a reminder link appears in the digest",
       "name": "DeepMind",
       "ats": "manual",
       "careers_url": "https://deepmind.google/about/careers/"

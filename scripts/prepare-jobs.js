@@ -93,6 +93,22 @@ async function fetchLever(slug) {
   });
 }
 
+async function fetchAshby(slug) {
+  const url = `https://api.ashbyhq.com/posting-api/job-board/${slug}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`Ashby ${slug}: HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.jobs || []).map(j => ({
+    id: `ab-${j.id}`,
+    title: j.title,
+    location: j.location || '',
+    department: j.departmentName || '',
+    description: stripHtml(j.descriptionHtml || j.descriptionPlain || '').slice(0, 800),
+    url: j.jobUrl || `https://jobs.ashbyhq.com/${slug}/${j.id}`,
+    postedAt: j.publishedAt || null
+  }));
+}
+
 // -- Stage 1: coarse category filter ----------------------------------------
 // Drops obvious non-tech roles (sales, marketing, legal, etc.) cheaply,
 // before spending tokens on LLM evaluation.
@@ -181,7 +197,7 @@ Rules:
 async function main() {
   const fbEnvPath = join(homedir(), '.follow-builders', '.env');
   if (existsSync(join(USER_DIR, '.env'))) loadEnv({ path: join(USER_DIR, '.env') });
-  else if (existsSync(fbEnvPath)) loadEnv({ path: fbEnvPath });
+  if (existsSync(fbEnvPath)) loadEnv({ path: fbEnvPath, override: false });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -191,6 +207,12 @@ async function main() {
 
   const errors = [];
   const config = await loadConfig();
+
+  if (config.paused) {
+    console.log(JSON.stringify({ status: 'paused', message: 'Job Scout is paused. Set "paused": false in config to resume.' }));
+    return;
+  }
+
   const seen = await loadSeen();
 
   const { coarseCategories = [], locations = [] } = config.filters || {};
@@ -212,6 +234,7 @@ async function main() {
     try {
       if (company.ats === 'greenhouse') jobs = await fetchGreenhouse(company.slug);
       else if (company.ats === 'lever') jobs = await fetchLever(company.slug);
+      else if (company.ats === 'ashby') jobs = await fetchAshby(company.slug);
       else { errors.push(`${company.name}: unknown ATS "${company.ats}"`); continue; }
     } catch (err) {
       errors.push(`${company.name}: ${err.message}`);

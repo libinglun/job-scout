@@ -19,7 +19,7 @@ async function main() {
   // Try job-scout .env first, fall back to follow-builders .env
   const fbEnvPath = join(homedir(), '.follow-builders', '.env');
   if (existsSync(ENV_PATH)) loadEnv({ path: ENV_PATH });
-  else if (existsSync(fbEnvPath)) loadEnv({ path: fbEnvPath });
+  if (existsSync(fbEnvPath)) loadEnv({ path: fbEnvPath, override: false });
 
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -36,6 +36,11 @@ async function main() {
   if (data.status === 'error') {
     process.stderr.write(`generate-digest: prepare-jobs error — ${data.message}\n`);
     process.exit(1);
+  }
+
+  if (data.status === 'paused') {
+    process.stderr.write(`generate-digest: ${data.message}\n`);
+    process.exit(2);
   }
 
   const { totalNew, isFirstRun, results = [], config: cfg = {} } = data;
@@ -61,12 +66,17 @@ async function main() {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
   });
 
+  const totalCompanies = results.length;
+  const totalListings = results.reduce((s, r) => s + (r.stats?.total || 0), 0);
+
   const systemPrompt = formatPrompt;
   const userPrompt = `Produce the job digest from the data below.
 
 Today's date: ${today}
 Locations filter: ${cfg.locations?.join(', ') || 'any'}
 New jobs found: ${totalNew}
+Total companies scanned: ${totalCompanies}
+Total listings scanned: ${totalListings}
 
 ## Job Data
 ${JSON.stringify(results, null, 2)}

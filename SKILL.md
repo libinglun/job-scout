@@ -1,110 +1,61 @@
-# Job Scout
+# Job Scout — Agent Instructions
 
-Daily/weekly digest of new job openings at tracked companies, delivered by email.
+Agent-facing reference for handling Job Scout requests. User-facing docs are in README.md.
 
-## First-time setup (ask Claude Code)
+## First-time setup
 
-Say: *"Set up job scout for me"*
+When a user says "set up job scout", walk them through:
 
-Claude Code will ask you for:
-1. **Companies** — name + ATS type (Greenhouse/Lever/manual) for each
-2. **Target role** — natural-language description of your ideal role and what you're NOT interested in
+1. **Companies** — name + ATS type for each (see ATS detection below)
+2. **Target role** — natural-language description of ideal role + exclusions
 3. **Locations** — cities and/or "Remote"
-4. **Email** — where to deliver the digest
+4. **Email** — delivery address
 5. **Schedule** — time and days (e.g. weekdays at 09:00)
 
-Then Claude Code will write `~/.job-scout/config.json`, run `npm install`, register the Windows Task Scheduler entry, and run a silent baseline pass so the first real email contains only genuinely new jobs.
+Then:
+1. Write `~/.job-scout/config.json` (use `config/default-config.json` as template)
+2. Ensure `ANTHROPIC_API_KEY` and `RESEND_API_KEY` are in `~/.job-scout/.env`
+3. Run `npm install` in the skill's `scripts/` directory
+4. Run `node scripts/setup-task.js` to register the scheduled task
+5. Run the pipeline once to baseline: `node prepare-jobs.js | node generate-digest.js | node deliver.js --dry-run`
 
-**Prerequisites:** `ANTHROPIC_API_KEY` and `RESEND_API_KEY` in `~/.job-scout/.env`.
+## Adding a company
 
-## User config: ~/.job-scout/config.json
+1. Determine the ATS by testing public API endpoints (see below)
+2. Add the entry to `~/.job-scout/config.json`
 
-Edit this file directly or ask Claude Code to change it.
+### ATS detection
 
-### Adding a company
+Try these in order:
 
-Ask Claude Code: *"Add [Company] to my job scout list"*
+| ATS | Test URL | Config |
+|-----|----------|--------|
+| Greenhouse | `https://boards-api.greenhouse.io/v1/boards/{slug}/jobs` → 200 | `{ "ats": "greenhouse", "slug": "{slug}" }` |
+| Lever | `https://api.lever.co/v0/postings/{slug}?mode=json` → 200 | `{ "ats": "lever", "slug": "{slug}" }` |
+| Ashby | `https://api.ashbyhq.com/posting-api/job-board/{slug}` → 200 | `{ "ats": "ashby", "slug": "{slug}" }` |
+| Manual | No API found | `{ "ats": "manual", "careers_url": "https://..." }` |
 
-Claude will:
-1. Look up which ATS the company uses (Greenhouse, Lever, or manual)
-2. Find the correct board slug by testing the public API
-3. Add the entry to `~/.job-scout/config.json`
-
-### ATS types
-
-| type | how it works | example |
-|------|-------------|---------|
-| `greenhouse` | Public Greenhouse boards API | `{ "ats": "greenhouse", "slug": "anthropic" }` |
-| `lever` | Public Lever postings API | `{ "ats": "lever", "slug": "mistral" }` |
-| `manual` | No API — included as a reminder link | `{ "ats": "manual", "careers_url": "https://..." }` |
-
-**Finding slugs:**
+**Finding slugs:** Check the company's careers page URL — the slug is usually in the path:
 - Greenhouse: `boards.greenhouse.io/{slug}`
 - Lever: `jobs.lever.co/{slug}`
+- Ashby: `jobs.ashbyhq.com/{slug}`
 
-### Target role
+## Config reference
 
-`targetRole` is a natural-language description read by the LLM when evaluating each job. Be specific — mention technologies, seniority level, and what you're not interested in.
+File: `~/.job-scout/config.json`
 
-### Location filter
-
-Edit `filters.locations` — matched case-insensitively. `"Remote"` matches any job with "remote" in the location field.
-
-### Coarse category filter (pre-LLM)
-
-Edit `filters.coarseCategories` — keyword list matched against job title + department before the LLM step, to drop obvious non-tech roles cheaply.
-
-### Schedule
-
-Edit `schedule.time` (HH:MM) and `schedule.days` (array of day names).
-
-After changing the schedule, ask Claude Code to apply it — or run:
-```
-node ~/.claude/skills/job-scout/scripts/setup-task.js
-```
-
-Examples:
-```json
-{ "time": "08:00", "days": ["Mon","Tue","Wed","Thu","Fri"] }
-{ "time": "09:05", "days": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] }
-```
-
-All 7 days → daily trigger. Any subset → weekly trigger on those days. `StartWhenAvailable` is always set.
-
-## macOS
-
-The fetch/filter/deliver pipeline (`prepare-jobs.js`, `generate-digest.js`, `deliver.js`) works on macOS unchanged. Use `run-jobs.sh` instead of `run-jobs.bat`.
-
-**Scheduled task setup is not yet automated on macOS.** When a Mac user asks to set up the schedule, tell them:
-
-1. Find the absolute path to `run-jobs.sh` in this skill's `scripts/` directory and make it executable: `chmod +x run-jobs.sh`
-2. Create `~/Library/LaunchAgents/com.job-scout.plist` — a launchd plist that runs `run-jobs.sh` at their configured time/days
-3. Load it with: `launchctl load ~/Library/LaunchAgents/com.job-scout.plist`
-
-Launchd plist template (daily at 09:05):
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>         <string>com.job-scout</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>/path/to/scripts/run-jobs.sh</string>
-  </array>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>    <integer>9</integer>
-    <key>Minute</key>  <integer>5</integer>
-  </dict>
-  <key>StandardOutPath</key> <string>/Users/you/.job-scout/job-scout.log</string>
-  <key>StandardErrorPath</key><string>/Users/you/.job-scout/job-scout.log</string>
-</dict>
-</plist>
-```
-
-For specific days only, replace `StartCalendarInterval` with an array of dicts, one per day (`<key>Weekday</key><integer>1</integer>` where 0=Sunday, 1=Monday, …).
+| Field | Type | Purpose |
+|-------|------|---------|
+| `companies[]` | array | List of tracked companies with ATS config |
+| `targetRole` | string | Natural-language role description for LLM evaluation |
+| `filters.coarseCategories` | string[] | Keywords matched against title+department (pre-LLM filter) |
+| `filters.locations` | string[] | Location filter (case-insensitive, "Remote" matches empty locations) |
+| `delivery.method` | `"email"` \| `"terminal"` \| `"both"` | How to deliver the digest |
+| `delivery.email` | string | Email address for delivery |
+| `delivery.onlyWhenNew` | boolean | Skip digest when no new jobs found |
+| `paused` | boolean | Set to `true` to pause scanning |
+| `schedule.time` | `"HH:MM"` | Time of day to run |
+| `schedule.days` | string[] | Day names (all 7 = daily trigger, subset = weekly) |
 
 ## Pipeline
 
@@ -112,24 +63,44 @@ For specific days only, replace `StartCalendarInterval` with an array of dicts, 
 prepare-jobs.js → generate-digest.js → deliver.js
 ```
 
-- `prepare-jobs.js` — fetches jobs, two-stage filter (keywords → LLM), diffs against seen-jobs state
-- `generate-digest.js` — formats matched jobs into a digest via Claude API
-- `deliver.js` — emails via Resend
+Run manually: `cd scripts && node prepare-jobs.js | node generate-digest.js | node deliver.js`
 
-Run manually:
-```bash
-cd ~/.claude/skills/job-scout/scripts
-node prepare-jobs.js | node generate-digest.js | node deliver.js
-```
+### deliver.js flags
+- `--dry-run` — force terminal output regardless of config
+- `--test` — send a test message to verify delivery
+- `--message "text"` — pass digest as argument
+- `--file path` — read digest from file
 
-## State
+## Schedule management
 
-`~/.job-scout/seen-jobs.json` — IDs of all jobs ever surfaced. Delete this file to reset (next run re-baselines; run after that sends new ones).
+After any schedule change, re-register by running `node scripts/setup-task.js`.
 
-## Logs
+### Windows
+Fully automated via `setup-task.js` → Windows Task Scheduler (`"Job Scout"` task).
 
-`~/.job-scout/job-scout.log`
+### macOS
+`setup-task.js` prints manual launchd instructions. Guide the user to:
+1. Make `run-jobs.sh` executable
+2. Create `~/Library/LaunchAgents/com.job-scout.plist` with the printed template
+3. Load with `launchctl load ~/Library/LaunchAgents/com.job-scout.plist`
 
-## Scheduled task
+## State files
 
-`"Job Scout"` in Windows Task Scheduler — configured from `schedule` in config.json. Re-register by running `setup-task.js` after any schedule change.
+| File | Purpose |
+|------|---------|
+| `~/.job-scout/config.json` | User configuration |
+| `~/.job-scout/.env` | API keys |
+| `~/.job-scout/seen-jobs.json` | IDs of previously surfaced jobs (delete to reset) |
+| `~/.job-scout/job-scout.log` | Pipeline logs |
+
+## Common requests
+
+| User says | Action |
+|-----------|--------|
+| "Add X to job scout" | Detect ATS, add to config |
+| "Remove X from job scout" | Remove from `companies[]` |
+| "Pause / resume job scout" | Set `paused` to `true` / `false` |
+| "Send a test email" | Run `node deliver.js --test` |
+| "Show my config" | Read and display `~/.job-scout/config.json` |
+| "Reset job scout" | Delete `~/.job-scout/seen-jobs.json` |
+| "Run job scout now" | Run the full pipeline with `--dry-run` |
