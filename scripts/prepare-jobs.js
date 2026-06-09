@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
 // Two-stage job filtering pipeline:
-//   Stage 1 (coarse): broad category keywords drop obvious non-tech roles cheaply
-//   Stage 2 (LLM):    Claude reads actual job descriptions + user's targetRole
-//                     description and decides relevance, returning a reason per job
+//   Stage 1 (scrape + extract): Firecrawl renders career pages → Claude extracts structured jobs
+//   Stage 2 (filter):           coarse keywords + location filter → LLM relevance evaluation
 //
 // Outputs JSON to stdout for generate-digest.js.
 
 import Anthropic from '@anthropic-ai/sdk';
+import FirecrawlApp from 'firecrawl';
+import { createHash } from 'crypto';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -41,77 +42,108 @@ async function saveSeen(seen) {
   await writeFile(SEEN_PATH, JSON.stringify([...seen], null, 2));
 }
 
-// -- HTML stripping ----------------------------------------------------------
+// -- Stable ID generation ----------------------------------------------------
 
-function stripHtml(html = '') {
-  return html
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+function jobId(company, title, location) {
+  return createHash('md5')
+    .update(`${company}|${title}|${location}`)
+    .digest('hex')
+    .slice(0, 12);
 }
 
-// -- ATS fetchers ------------------------------------------------------------
+// -- Firecrawl scraping + LLM extraction -------------------------------------
 
-async function fetchGreenhouse(slug) {
-  const url = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs?content=true`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`Greenhouse ${slug}: HTTP ${res.status}`);
-  const data = await res.json();
-  return (data.jobs || []).map(j => ({
-    id: `gh-${j.id}`,
-    title: j.title,
-    location: j.location?.name || '',
-    department: j.departments?.[0]?.name || '',
-    description: stripHtml(j.content || '').slice(0, 800),
-    url: j.absolute_url,
-    postedAt: j.updated_at || null
-  }));
-}
+async function scrapeAndExtract(company, firecrawl, anthropic) {
+  const url = company.careers_url;
+  if (!url) throw new Error(`${company.name}: no careers_url configured`);
 
-async function fetchLever(slug) {
-  const url = `https://api.lever.co/v0/postings/${slug}?mode=json`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`Lever ${slug}: HTTP ${res.status}`);
-  const data = await res.json();
-  return (Array.isArray(data) ? data : []).map(j => {
-    const description = [
-      j.descriptionPlain || '',
-      j.openingPlain || '',
-      j.additionalPlain || ''
-    ].filter(Boolean).join('\n').slice(0, 800);
-    return {
-      id: `lv-${j.id}`,
-      title: j.text,
-      location: j.categories?.location || '',
-      department: j.categories?.team || '',
-      description,
-      url: j.hostedUrl,
-      postedAt: j.createdAt ? new Date(j.createdAt).toISOString() : null
-    };
+  process.stderr.write(`prepare-jobs: ${company.name} — scraping ${url}\n`);
+
+  const scrapeResult = await firecrawl.scrapeUrl(url, {
+    formats: ['markdown'],
+    timeout: 30000
   });
-}
 
-async function fetchAshby(slug) {
-  const url = `https://api.ashbyhq.com/posting-api/job-board/${slug}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`Ashby ${slug}: HTTP ${res.status}`);
-  const data = await res.json();
-  return (data.jobs || []).map(j => ({
-    id: `ab-${j.id}`,
-    title: j.title,
+  if (!scrapeResult.success) {
+    throw new Error(`${company.name}: Firecrawl scrape failed — ${scrapeResult.error || 'unknown error'}`);
+  }
+
+  const markdown = scrapeResult.markdown || '';
+  if (markdown.length < 50) {
+    process.stderr.write(`prepare-jobs: ${company.name} — page returned very little content (${markdown.length} chars)\n`);
+    return [];
+  }
+
+  const truncated = markdown.slice(0, 60000);
+
+  process.stderr.write(`prepare-jobs: ${company.name} — ${truncated.length} chars, extracting jobs via LLM...\n`);
+
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 8192,
+    messages: [{
+      role: 'user',
+      content: `Extract all job postings visible on this careers page.
+Company: ${company.name}
+Page URL: ${url}
+
+Return a JSON array. Each job object must have:
+- title: exact job title as listed
+- location: location(s) as listed (include all if multiple)
+- department: department or team if visible, otherwise empty string
+- url: the apply or detail link (absolute URL — if relative, prefix with the page's base domain)
+
+If no jobs are found on the page, return an empty array [].
+Return ONLY the JSON array, no other text.
+
+Page content:
+${truncated}`
+    }]
+  });
+
+  let jobs;
+  try {
+    const text = response.content[0]?.text?.trim() || '[]';
+    const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    jobs = JSON.parse(cleaned);
+  } catch {
+    if (response.stop_reason === 'max_tokens') {
+      // Output was truncated — salvage complete objects from the partial JSON
+      const text = response.content[0]?.text?.trim() || '';
+      const cleaned = text.replace(/^```(?:json)?\n?/, '');
+      const lastComplete = cleaned.lastIndexOf('},');
+      if (lastComplete > 0) {
+        try {
+          jobs = JSON.parse(cleaned.slice(0, lastComplete + 1) + ']');
+          process.stderr.write(`prepare-jobs: ${company.name} — output truncated, salvaged ${jobs.length} jobs\n`);
+        } catch {
+          process.stderr.write(`prepare-jobs: ${company.name} — output truncated and unsalvageable, skipping\n`);
+          return [];
+        }
+      } else {
+        process.stderr.write(`prepare-jobs: ${company.name} — output truncated, no complete entries, skipping\n`);
+        return [];
+      }
+    } else {
+      process.stderr.write(`prepare-jobs: ${company.name} — LLM returned non-JSON, skipping\n`);
+      return [];
+    }
+  }
+
+  if (!Array.isArray(jobs)) return [];
+
+  return jobs.map(j => ({
+    id: jobId(company.name, j.title || '', j.location || ''),
+    title: j.title || '(untitled)',
     location: j.location || '',
-    department: j.departmentName || '',
-    description: stripHtml(j.descriptionHtml || j.descriptionPlain || '').slice(0, 800),
-    url: j.jobUrl || `https://jobs.ashbyhq.com/${slug}/${j.id}`,
-    postedAt: j.publishedAt || null
+    department: j.department || '',
+    description: '',
+    url: j.url || url,
+    postedAt: null
   }));
 }
 
 // -- Stage 1: coarse category filter ----------------------------------------
-// Drops obvious non-tech roles (sales, marketing, legal, etc.) cheaply,
-// before spending tokens on LLM evaluation.
 
 function coarseFilter(jobs, categories) {
   if (!categories || categories.length === 0) return jobs;
@@ -134,13 +166,9 @@ function locationFilter(jobs, locations) {
 }
 
 // -- Stage 2: LLM relevance filter -------------------------------------------
-// Claude reads each job's actual title + description and the user's targetRole,
-// then returns {id, relevant, reason} for each.
 
-async function llmFilter(jobs, targetRole, apiKey) {
+async function llmFilter(jobs, targetRole, anthropic) {
   if (jobs.length === 0) return [];
-
-  const client = new Anthropic({ apiKey });
 
   const jobList = jobs.map(j => ({
     id: j.id,
@@ -163,13 +191,13 @@ Return a JSON array — one entry per job — in this exact format:
 
 Rules:
 - Base your decision on technical fit with the target role description
-- Read the actual job description content carefully — titles alone can be misleading
+- Read the actual job title and any description carefully
 - If the job content clearly matches the candidate's background and interests: relevant: true
 - If the role is in a different function (sales, marketing, legal, finance, HR, design): relevant: false
 - When genuinely uncertain, lean toward including (relevant: true)
 - Return JSON only, no other text`;
 
-  const response = await client.messages.create({
+  const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 2048,
     messages: [{ role: 'user', content: prompt }]
@@ -178,7 +206,6 @@ Rules:
   let decisions;
   try {
     const text = response.content[0]?.text?.trim() || '[]';
-    // Strip markdown code fences if present
     const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     decisions = JSON.parse(cleaned);
   } catch {
@@ -205,6 +232,12 @@ async function main() {
     process.exit(1);
   }
 
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY;
+  if (!firecrawlKey) {
+    console.error(JSON.stringify({ status: 'error', message: 'FIRECRAWL_API_KEY not set' }));
+    process.exit(1);
+  }
+
   const errors = [];
   const config = await loadConfig();
 
@@ -219,48 +252,39 @@ async function main() {
   const targetRole = config.targetRole || 'Technical engineering or research role';
   const companies = config.companies || [];
 
+  const firecrawl = new FirecrawlApp({ apiKey: firecrawlKey });
+  const anthropic = new Anthropic({ apiKey });
+
   const results = [];
   const allCurrentIds = new Set();
 
   for (const company of companies) {
-    if (!company.name || !company.ats) continue;
-
-    if (company.ats === 'manual') {
-      results.push({ company: company.name, ats: 'manual', careers_url: company.careers_url, newJobs: [] });
-      continue;
-    }
+    if (!company.name || !company.careers_url) continue;
 
     let jobs = [];
     try {
-      if (company.ats === 'greenhouse') jobs = await fetchGreenhouse(company.slug);
-      else if (company.ats === 'lever') jobs = await fetchLever(company.slug);
-      else if (company.ats === 'ashby') jobs = await fetchAshby(company.slug);
-      else { errors.push(`${company.name}: unknown ATS "${company.ats}"`); continue; }
+      jobs = await scrapeAndExtract(company, firecrawl, anthropic);
     } catch (err) {
       errors.push(`${company.name}: ${err.message}`);
       continue;
     }
 
-    // Stage 1: location + coarse category filter
     const locationFiltered = locationFilter(jobs, locations);
     const coarseFiltered = coarseFilter(locationFiltered, coarseCategories);
 
-    // Track all coarse-filtered IDs as seen (prevents re-sending known jobs)
     for (const j of coarseFiltered) allCurrentIds.add(j.id);
 
     const isFirstRun = seen.size === 0;
     const unseenJobs = isFirstRun ? [] : coarseFiltered.filter(j => !seen.has(j.id));
 
-    // Stage 2: LLM relevance filter on unseen jobs only
     let relevantNew = [];
     if (unseenJobs.length > 0) {
-      process.stderr.write(`prepare-jobs: ${company.name} — ${unseenJobs.length} new candidate(s), sending to LLM...\n`);
-      relevantNew = await llmFilter(unseenJobs, targetRole, apiKey);
+      process.stderr.write(`prepare-jobs: ${company.name} — ${unseenJobs.length} new candidate(s), evaluating relevance...\n`);
+      relevantNew = await llmFilter(unseenJobs, targetRole, anthropic);
     }
 
     results.push({
       company: company.name,
-      ats: company.ats,
       newJobs: relevantNew,
       stats: {
         total: jobs.length,

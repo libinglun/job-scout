@@ -6,7 +6,7 @@ Agent-facing reference for handling Job Scout requests. User-facing docs are in 
 
 When a user says "set up job scout", walk them through:
 
-1. **Companies** — name + ATS type for each (see ATS detection below)
+1. **Companies** — name + careers page URL for each
 2. **Target role** — natural-language description of ideal role + exclusions
 3. **Locations** — cities and/or "Remote"
 4. **Email** — delivery address
@@ -14,31 +14,17 @@ When a user says "set up job scout", walk them through:
 
 Then:
 1. Write `~/.job-scout/config.json` (use `config/default-config.json` as template)
-2. Ensure `ANTHROPIC_API_KEY` and `RESEND_API_KEY` are in `~/.job-scout/.env`
+2. Ensure `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, and `FIRECRAWL_API_KEY` are in `~/.job-scout/.env`
 3. Run `npm install` in the skill's `scripts/` directory
 4. Run `node scripts/setup-task.js` to register the scheduled task
 5. Run the pipeline once to baseline: `node prepare-jobs.js | node generate-digest.js | node deliver.js --dry-run`
 
 ## Adding a company
 
-1. Determine the ATS by testing public API endpoints (see below)
-2. Add the entry to `~/.job-scout/config.json`
+1. Ask the user for the company's careers page URL
+2. Add `{ "name": "Company Name", "careers_url": "https://..." }` to `~/.job-scout/config.json`
 
-### ATS detection
-
-Try these in order:
-
-| ATS | Test URL | Config |
-|-----|----------|--------|
-| Greenhouse | `https://boards-api.greenhouse.io/v1/boards/{slug}/jobs` → 200 | `{ "ats": "greenhouse", "slug": "{slug}" }` |
-| Lever | `https://api.lever.co/v0/postings/{slug}?mode=json` → 200 | `{ "ats": "lever", "slug": "{slug}" }` |
-| Ashby | `https://api.ashbyhq.com/posting-api/job-board/{slug}` → 200 | `{ "ats": "ashby", "slug": "{slug}" }` |
-| Manual | No API found | `{ "ats": "manual", "careers_url": "https://..." }` |
-
-**Finding slugs:** Check the company's careers page URL — the slug is usually in the path:
-- Greenhouse: `boards.greenhouse.io/{slug}`
-- Lever: `jobs.lever.co/{slug}`
-- Ashby: `jobs.ashbyhq.com/{slug}`
+That's it — Firecrawl handles rendering JS-heavy career pages and Claude extracts structured job data from the page content.
 
 ## Config reference
 
@@ -46,7 +32,7 @@ File: `~/.job-scout/config.json`
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `companies[]` | array | List of tracked companies with ATS config |
+| `companies[]` | array | List of tracked companies with `name` and `careers_url` |
 | `targetRole` | string | Natural-language role description for LLM evaluation |
 | `filters.coarseCategories` | string[] | Keywords matched against title+department (pre-LLM filter) |
 | `filters.locations` | string[] | Location filter (case-insensitive, "Remote" matches empty locations) |
@@ -62,6 +48,13 @@ File: `~/.job-scout/config.json`
 ```
 prepare-jobs.js → generate-digest.js → deliver.js
 ```
+
+### How scraping works
+
+1. **Firecrawl** renders each company's careers page (handles JS/SPA) and returns clean markdown
+2. **Claude Haiku** extracts structured job data (title, location, department, URL) from the markdown
+3. Jobs are filtered by location, coarse keywords, and then LLM relevance evaluation
+4. Stable IDs are generated via MD5 hash of `company|title|location` for dedup
 
 Run manually: `cd scripts && node prepare-jobs.js | node generate-digest.js | node deliver.js`
 
@@ -89,15 +82,15 @@ Fully automated via `setup-task.js` → Windows Task Scheduler (`"Job Scout"` ta
 | File | Purpose |
 |------|---------|
 | `~/.job-scout/config.json` | User configuration |
-| `~/.job-scout/.env` | API keys |
-| `~/.job-scout/seen-jobs.json` | IDs of previously surfaced jobs (delete to reset) |
+| `~/.job-scout/.env` | API keys (ANTHROPIC, RESEND, FIRECRAWL) |
+| `~/.job-scout/seen-jobs.json` | MD5 hashes of previously surfaced jobs (delete to reset) |
 | `~/.job-scout/job-scout.log` | Pipeline logs |
 
 ## Common requests
 
 | User says | Action |
 |-----------|--------|
-| "Add X to job scout" | Detect ATS, add to config |
+| "Add X to job scout" | Ask for careers URL, add to config |
 | "Remove X from job scout" | Remove from `companies[]` |
 | "Pause / resume job scout" | Set `paused` to `true` / `false` |
 | "Send a test email" | Run `node deliver.js --test` |

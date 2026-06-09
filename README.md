@@ -14,7 +14,6 @@ A daily email digest with:
 - New job openings from your tracked companies, filtered to your role and location
 - AI-evaluated relevance — Claude reads each job description and decides if it fits your background
 - Direct apply links for every matched position
-- Reminder links for companies without API access (TikTok, Meta, etc.)
 
 ## Quick Start
 
@@ -23,7 +22,7 @@ A daily email digest with:
 3. The agent walks you through setup conversationally — no config files to edit
 
 The agent will ask you:
-- Which companies you want to track
+- Which companies you want to track (just the name and careers page URL)
 - What kind of role you're looking for (and what you're not interested in)
 - Which locations or remote
 - Where to send the digest (email address)
@@ -34,21 +33,23 @@ jobs so you only get notified about genuinely new openings.
 
 ### Prerequisites
 
-You'll need two API keys in `~/.job-scout/.env`:
+You'll need three API keys in `~/.job-scout/.env`:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 RESEND_API_KEY=re_...
+FIRECRAWL_API_KEY=fc-...
 ```
 
 - **Anthropic** — [console.anthropic.com](https://console.anthropic.com/) (AI reads job descriptions)
 - **Resend** — [resend.com](https://resend.com/) (sends the email digest, free tier available)
+- **Firecrawl** — [firecrawl.dev](https://www.firecrawl.dev/) (renders JS-heavy career pages, free tier: 500 credits/month)
 
 ## Changing Settings
 
 Your preferences are configurable through conversation. Just tell your agent:
 
-- **"Add Stripe to my job scout list"** — finds the right job board API and adds it
+- **"Add Stripe to my job scout list"** — adds it with the careers page URL
 - **"Remove Cohere from job scout"** — removes a company
 - **"Change my target role to senior backend engineer"** — updates what the AI looks for
 - **"Add Berlin to my locations"** — expands your location filter
@@ -74,18 +75,27 @@ Edit the file in the `prompts/` folder:
 
 This is a plain English instruction, not code. Changes take effect on the next digest.
 
-## Supported Company Types
+## How It Works
 
-| Type | How it works | Example companies |
-|------|-------------|-------------------|
-| **Greenhouse** | Auto-fetches from public API | Anthropic, Stripe, Notion |
-| **Lever** | Auto-fetches from public API | Mistral AI, Figma |
-| **Ashby** | Auto-fetches from public API | Ramp, Linear, Labelbox |
-| **Manual** | Reminder link in your digest | TikTok, Meta, Spotify, DeepMind |
+```
+377 jobs on Anthropic's careers page
+  → Firecrawl renders the page and extracts content
+  → Claude extracts structured job data from the page
+  → 63 match your location (London, Remote)
+  → 45 pass keyword filter (engineering roles only)
+  → 3 confirmed relevant by AI → emailed to you
+```
 
-When you add a company, the agent automatically detects which type to use.
-Companies without a public job API are added as manual links so you don't forget
-to check them.
+1. **Scrape** — Firecrawl renders each company's careers page (handles JS/SPA sites)
+2. **Extract** — Claude reads the page content and extracts structured job listings
+3. **Filter** — drops jobs outside your locations and non-technical roles
+4. **AI review** — Claude evaluates each remaining job against your role preferences
+5. **Digest** — formats matches into a clean, scannable email
+6. **Deliver** — sends via Resend on your schedule
+
+Only new jobs trigger an email — you won't see the same listing twice.
+
+See [examples/sample-digest.md](examples/sample-digest.md) for what the output looks like.
 
 ## Installation
 
@@ -98,34 +108,17 @@ cd ~/.claude/skills/job-scout/scripts && npm install
 ## Requirements
 
 - Claude Code (or similar AI agent)
-- Internet connection (to fetch job listings from public APIs)
-- Anthropic API key (for AI-powered job relevance filtering)
+- Internet connection (to scrape career pages)
+- Anthropic API key (for AI-powered job extraction and relevance filtering)
+- Firecrawl API key (for rendering JS-heavy career pages)
 - Resend API key (for email delivery — free tier available)
-
-## How It Works
-
-```
-377 jobs at Anthropic
-  → 63 match your location (London, Remote)
-  → 45 pass keyword filter (engineering roles only)
-  → 3 confirmed relevant by AI → emailed to you
-```
-
-1. **Fetch** — pulls live listings from company job boards (Greenhouse, Lever, Ashby APIs)
-2. **Filter** — drops jobs outside your locations and non-technical roles
-3. **AI review** — Claude reads each remaining job description against your role preferences
-4. **Digest** — formats matches into a clean, scannable email
-5. **Deliver** — sends via Resend on your schedule
-
-Only new jobs trigger an email — you won't see the same listing twice.
-
-See [examples/sample-digest.md](examples/sample-digest.md) for what the output looks like.
 
 ## Privacy
 
-- Job listings are fetched directly from public company APIs — no middleman
+- Job listings are scraped directly from company career pages — no middleman
 - Your config and seen-jobs history stay on your machine (`~/.job-scout/`)
-- The Anthropic API key is used only to evaluate job relevance locally
+- The Anthropic API key is used only to extract and evaluate jobs
+- The Firecrawl API key is used only to render career pages
 - The Resend API key is used only to send emails to your own address
 
 ## License
