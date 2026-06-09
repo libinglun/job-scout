@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
-// Registers (or re-registers) the "Job Scout" Windows Task Scheduler entry
-// from the schedule section of ~/.job-scout/config.json.
+// Registers (or re-registers) the "Job Scout" scheduled task from
+// the schedule section of ~/.job-scout/config.json.
+//
+// Windows: uses Task Scheduler via PowerShell.
+// macOS:   launchd support not yet implemented — prints manual instructions.
 //
 // Run this whenever you change schedule.time or schedule.days in config.json.
-// Can also be run as first-time setup.
 
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -52,6 +54,23 @@ function ps(cmd) {
 }
 
 async function main() {
+  if (process.platform === 'darwin') {
+    const config = existsSync(CONFIG_PATH)
+      ? JSON.parse(await readFile(CONFIG_PATH, 'utf-8'))
+      : {};
+    const { time = '09:05', days } = config.schedule || {};
+    const resolvedDays = parseDays(days);
+    const label = resolvedDays.length === 7 ? 'daily' : resolvedDays.join('/');
+
+    console.log('macOS scheduled task setup is not yet automated.');
+    console.log('To schedule Job Scout manually, create a launchd plist:');
+    console.log(`  Schedule: ${label} at ${time}`);
+    console.log(`  Script:   ${BAT_PATH.replace('run-jobs.bat', 'run-jobs.sh')}`);
+    console.log('');
+    console.log('See SKILL.md → macOS section for full launchd instructions.');
+    return;
+  }
+
   if (!existsSync(CONFIG_PATH)) {
     console.error(`Config not found at ${CONFIG_PATH}. Run job-scout setup first.`);
     process.exit(1);

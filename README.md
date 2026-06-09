@@ -88,6 +88,13 @@ product management, design, legal, finance, or HR."
 
 All 7 days → daily trigger. Any subset → weekly trigger. After changing, run `node scripts/setup-task.js` or ask Claude Code to apply it.
 
+## Platform support
+
+| | Windows | macOS |
+|---|---|---|
+| Fetch / filter / deliver | ✓ | ✓ |
+| Scheduled task setup | ✓ (Task Scheduler, automated) | Partial — use `run-jobs.sh` + manual launchd setup (see SKILL.md) |
+
 ## Pipeline
 
 ```

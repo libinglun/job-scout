@@ -71,6 +71,41 @@ Examples:
 
 All 7 days → daily trigger. Any subset → weekly trigger on those days. `StartWhenAvailable` is always set.
 
+## macOS
+
+The fetch/filter/deliver pipeline (`prepare-jobs.js`, `generate-digest.js`, `deliver.js`) works on macOS unchanged. Use `run-jobs.sh` instead of `run-jobs.bat`.
+
+**Scheduled task setup is not yet automated on macOS.** When a Mac user asks to set up the schedule, tell them:
+
+1. Find the absolute path to `run-jobs.sh` in this skill's `scripts/` directory and make it executable: `chmod +x run-jobs.sh`
+2. Create `~/Library/LaunchAgents/com.job-scout.plist` — a launchd plist that runs `run-jobs.sh` at their configured time/days
+3. Load it with: `launchctl load ~/Library/LaunchAgents/com.job-scout.plist`
+
+Launchd plist template (daily at 09:05):
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>         <string>com.job-scout</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/path/to/scripts/run-jobs.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>    <integer>9</integer>
+    <key>Minute</key>  <integer>5</integer>
+  </dict>
+  <key>StandardOutPath</key> <string>/Users/you/.job-scout/job-scout.log</string>
+  <key>StandardErrorPath</key><string>/Users/you/.job-scout/job-scout.log</string>
+</dict>
+</plist>
+```
+
+For specific days only, replace `StartCalendarInterval` with an array of dicts, one per day (`<key>Weekday</key><integer>1</integer>` where 0=Sunday, 1=Monday, …).
+
 ## Pipeline
 
 ```
