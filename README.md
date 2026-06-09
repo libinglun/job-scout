@@ -28,6 +28,12 @@ The agent will ask you:
 - Where to send the digest (email address)
 - How often and what time
 
+> **Tip:** Most career sites let you filter by department or role category.
+> Use the filtered URL instead of the base careers page — for example,
+> `https://careers.snap.com/jobs?role=Engineering` instead of
+> `https://careers.snap.com/jobs`. This way you only scrape relevant roles
+> and get better results.
+
 Your first digest arrives the next day. The initial run silently indexes existing
 jobs so you only get notified about genuinely new openings.
 
