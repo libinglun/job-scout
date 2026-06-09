@@ -19,70 +19,74 @@ Only *new* jobs are evaluated — already-seen IDs are tracked in `~/.job-scout/
 
 ## Setup
 
+This skill is designed to be set up through Claude Code. Open Claude Code and say:
+
+> "Set up job scout for me"
+
+Claude Code will walk you through configuring companies, your target role, locations, delivery email, and schedule — then register the Windows Task Scheduler entry and run a silent baseline pass.
+
 ### Prerequisites
 
-- Node.js 18+
-- [Anthropic API key](https://console.anthropic.com/) (for LLM filtering + digest formatting)
-- [Resend API key](https://resend.com/) (for email delivery)
-
-### 1. Add secrets
-
-Create `~/.job-scout/.env`:
+Before running setup, add your API keys to `~/.job-scout/.env`:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 RESEND_API_KEY=re_...
 ```
 
-### 2. Run setup
+- **Anthropic key** — [console.anthropic.com](https://console.anthropic.com/) (used for LLM filtering + digest formatting)
+- **Resend key** — [resend.com](https://resend.com/) (used for email delivery)
+
+### Manual setup (without Claude Code)
 
 ```bash
 cd scripts
 npm install
-node setup.js
 ```
 
-This will:
-- Copy `config/default-config.json` → `~/.job-scout/config.json`
-- Validate your secrets
-- Register a Windows Task Scheduler entry based on `schedule` in config
-- Run a silent baseline pass so the first real email contains only genuinely new jobs
-
-### 3. Edit your config
-
-Open `~/.job-scout/config.json` and fill in:
-
-| Field | Description |
-|---|---|
-| `companies` | List of companies to track (see ATS types below) |
-| `targetRole` | Natural-language description of your ideal role — be specific |
-| `filters.locations` | City names + `"Remote"` |
-| `filters.coarseCategories` | Keywords matched against title+department (pre-LLM filter) |
-| `delivery.email` | Where to send the digest |
-| `schedule.time` | HH:MM (24-hour) |
-| `schedule.days` | Array of day names, e.g. `["Mon","Tue","Wed","Thu","Fri"]` |
-
-After changing `schedule`, re-apply it:
+Copy `config/default-config.json` to `~/.job-scout/config.json` and edit it, then:
 
 ```bash
-node scripts/setup-task.js
+node setup-task.js          # register Task Scheduler entry
+node prepare-jobs.js        # baseline pass (no email sent)
 ```
 
-## ATS types
+## Configuration
 
-| type | how it works | config |
+All config lives in `~/.job-scout/config.json`. Ask Claude Code to change anything, or edit directly.
+
+### Companies
+
+Each entry specifies a company and how to fetch its jobs:
+
+| ATS type | Description | Required fields |
 |---|---|---|
-| `greenhouse` | Greenhouse Boards public API | `{ "ats": "greenhouse", "slug": "anthropic" }` |
-| `lever` | Lever public postings API | `{ "ats": "lever", "slug": "mistral" }` |
-| `manual` | No API — digest includes a reminder link | `{ "ats": "manual", "careers_url": "https://..." }` |
+| `greenhouse` | Greenhouse Boards public API | `slug` |
+| `lever` | Lever public postings API | `slug` |
+| `manual` | No API — digest shows a reminder link | `careers_url` |
 
-**Finding slugs:**
-- Greenhouse: `boards.greenhouse.io/{slug}` or `boards.greenhouse.io/embed/job_board?for={slug}`
-- Lever: `jobs.lever.co/{slug}`
+Finding slugs: Greenhouse → `boards.greenhouse.io/{slug}`, Lever → `jobs.lever.co/{slug}`
 
-## Adding companies via Claude Code
+### Target role
 
-Ask Claude Code: *"Add [Company] to my job scout list"* — it will find the right ATS and slug, update config, and confirm.
+`targetRole` is read by the LLM when evaluating each job description. Write it as a plain English description of what you want and don't want:
+
+```
+"Senior software engineer or ML engineer roles focused on model training infrastructure,
+distributed systems, compilers, or AI tooling. Not interested in sales, marketing,
+product management, design, legal, finance, or HR."
+```
+
+### Schedule
+
+```json
+"schedule": {
+  "time": "09:05",
+  "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]
+}
+```
+
+All 7 days → daily trigger. Any subset → weekly trigger. After changing, run `node scripts/setup-task.js` or ask Claude Code to apply it.
 
 ## Pipeline
 
@@ -101,11 +105,11 @@ node prepare-jobs.js | node generate-digest.js | node deliver.js
 
 | Path | Purpose |
 |---|---|
-| `~/.job-scout/config.json` | Your config (edit this) |
+| `~/.job-scout/config.json` | Your config |
 | `~/.job-scout/.env` | API keys |
 | `~/.job-scout/seen-jobs.json` | Seen job IDs — delete to reset |
 | `~/.job-scout/job-scout.log` | Run logs |
 
 ## Resetting
 
-Delete `~/.job-scout/seen-jobs.json` to reset state. Next run re-baselines; the run after that sends new jobs.
+Delete `~/.job-scout/seen-jobs.json`. Next run re-baselines; the run after that sends only new jobs.
