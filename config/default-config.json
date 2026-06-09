@@ -1,0 +1,41 @@
+{
+  "_comment": "Job Scout config — edit companies list, or ask Claude Code to add/remove entries",
+  "companies": [
+    {
+      "_comment": "Greenhouse ATS — find the slug in the board URL: boards.greenhouse.io/{slug}",
+      "name": "Anthropic",
+      "ats": "greenhouse",
+      "slug": "anthropic"
+    },
+    {
+      "_comment": "Lever ATS — find the slug in the postings URL: jobs.lever.co/{slug}",
+      "name": "Mistral AI",
+      "ats": "lever",
+      "slug": "mistral"
+    },
+    {
+      "_comment": "For companies not on Greenhouse/Lever, use 'manual' — a reminder link appears in the digest",
+      "name": "DeepMind",
+      "ats": "manual",
+      "careers_url": "https://deepmind.google/about/careers/"
+    }
+  ],
+  "targetRole": "Describe your ideal role here — the LLM uses this to decide which jobs are relevant. Be specific about tech stack, seniority, and what you're NOT interested in.",
+  "filters": {
+    "coarseCategories": [
+      "engineer", "software", "research", "scientist", "technical",
+      "developer", "data", "infrastructure", "platform", "ml", "machine learning",
+      "compiler", "systems", "applied"
+    ],
+    "locations": ["London", "Remote"]
+  },
+  "delivery": {
+    "method": "email",
+    "email": "",
+    "onlyWhenNew": true
+  },
+  "schedule": {
+    "time": "09:05",
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+  }
+}
